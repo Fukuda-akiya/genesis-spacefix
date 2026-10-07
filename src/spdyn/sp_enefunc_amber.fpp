@@ -515,6 +515,7 @@ contains
     integer                      :: i, j, k, ih, icel_local, connect
     integer                      :: i1, i2, ih1, ih2, icel1, icel2, icel
     integer                      :: nbond_a, nbond_c
+    logical                      :: found_hgr
     integer                      :: wat_bonds, wat_found
     integer                      :: tmp_mole_no, mole_no
     character(6)                 :: ri1, ri2
@@ -704,6 +705,7 @@ contains
 
             if (icel > 0 .and. icel <= ncel) then
 
+              found_hgr = .false.
               do j = 1, connect
 
                 do k = 1, HGr_local(j,icel)
@@ -724,6 +726,7 @@ contains
                       end if
 
                       nbond_c = nbond_c + 1
+                      found_hgr = .true.
                       HGr_bond_dist(ih+1,k,j,icel) = &
                               prmtop%bond_equil_uniq(prmtop%bond_inc_hy(3,i))
   
@@ -732,6 +735,19 @@ contains
                   end do
                 end do
               end do
+
+              ! the H group was removed (fixed atoms): normal bond term
+              if (allocated(constraints%fixatm) .and. .not. found_hgr) then
+                nbond_a = nbond_a + 1
+                bond(icel) = bond(icel) + 1
+                if (bond(icel) > MaxBond) &
+                  call error_msg('Setup_Enefunc_Bond_Constraint> Too many bonds.')
+                list (1,bond(icel),icel) = i1
+                list (2,bond(icel),icel) = i2
+                force(  bond(icel),icel) = prmtop%bond_fcons_uniq(prmtop%bond_inc_hy(3,i))
+                dist (  bond(icel),icel) = prmtop%bond_equil_uniq(prmtop%bond_inc_hy(3,i))
+                bond_pbc(bond(icel),icel) = 13
+              end if
             end if
           end if
 

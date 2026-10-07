@@ -209,8 +209,6 @@ contains
 
     ! fixed atoms are not supported together with SHAKE/SETTLE
     !
-    if (cons_info%rigid_bond .and. fixatm_requested(cons_info)) &
-      call error_msg('Read_Ctrl_Constraints> fixatm_select_index / fixatm_atom_index cannot be used with rigid_bond = YES')
 
     ! write parameters to MsgOut
     !

@@ -783,6 +783,16 @@ contains
     call setup_fixatm_spdyn(ctrl_data%cons_info, ctrl_data%sel_info, &
                             molecule, fixatm, num_fixatm)
 
+    ! fixed atoms with SHAKE/SETTLE: only AMBER is supported
+    !
+    if (num_fixatm > 0) then
+      if (ctrl_data%cons_info%rigid_bond .and. &
+          ctrl_data%ene_info%forcefield /= ForcefieldAMBER) &
+        call error_msg('Setup_Spdyn_Remd> fixed atoms with rigid_bond are supported only for AMBER')
+      allocate(constraints%fixatm(size(fixatm)))
+      constraints%fixatm = fixatm
+    end if
+
     ! set parameters for domain
     !
     if (present(alchemy)) then

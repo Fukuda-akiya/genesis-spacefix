@@ -218,6 +218,11 @@ contains
     !
     call check_light_atom_name(con_info%hydrogen_mass_upper_bound, molecule)
 
+    ! hydrogens of groups with fixed atoms are not constrained
+    !
+    if (allocated(constraints%fixatm)) &
+      call unconstrain_fixed_hydrogen(constraints, molecule)
+
     call setup_solute_and_water(molecule, enefunc,       &
                                 constraints%water_model, &
                                 constraints%water_type,  &
@@ -1799,6 +1804,89 @@ contains
   !! @param[inout] water_type  : water type
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    unconstrain_fixed_hydrogen
+  !> @brief        treat hydrogens of groups with fixed atoms as ordinary atoms
+  !! @param[in]    constraints : constraints information (fixatm, hydrogen_type)
+  !! @param[inout] molecule    : molecule information (light atom flags)
+  !
+  !  A group is a heavy atom and its hydrogens. If the heavy atom or one of
+  !  its hydrogens is fixed, the hydrogens are no longer light atoms, so no
+  !  SHAKE group is made for them and their bonds become ordinary bonds.
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine unconstrain_fixed_hydrogen(constraints, molecule)
+
+    ! formal arguments
+    type(s_constraints),     intent(in)    :: constraints
+    type(s_molecule),        intent(inout) :: molecule
+
+    ! local variables
+    integer                  :: i, a, b
+    logical, allocatable     :: dropped(:)
+
+
+    allocate(dropped(molecule%num_atoms))
+    dropped = .false.
+
+    do i = 1, molecule%num_bonds
+      a = molecule%bond_list(1,i)
+      b = molecule%bond_list(2,i)
+      if (is_light(constraints, molecule, a) .and. &
+          .not. is_light(constraints, molecule, b)) then
+        if (constraints%fixatm(a) .or. constraints%fixatm(b)) dropped(b) = .true.
+      else if (is_light(constraints, molecule, b) .and. &
+               .not. is_light(constraints, molecule, a)) then
+        if (constraints%fixatm(a) .or. constraints%fixatm(b)) dropped(a) = .true.
+      end if
+    end do
+
+    do i = 1, molecule%num_bonds
+      a = molecule%bond_list(1,i)
+      b = molecule%bond_list(2,i)
+      if (is_light(constraints, molecule, b) .and. &
+          .not. is_light(constraints, molecule, a)) then
+        if (dropped(a)) call set_not_light(molecule, b)
+      else if (is_light(constraints, molecule, a) .and. &
+               .not. is_light(constraints, molecule, b)) then
+        if (dropped(b)) call set_not_light(molecule, a)
+      end if
+    end do
+
+    deallocate(dropped)
+
+    return
+
+  contains
+
+    logical function is_light(constraints, molecule, i)
+      type(s_constraints), intent(in) :: constraints
+      type(s_molecule),    intent(in) :: molecule
+      integer,             intent(in) :: i
+
+      if (constraints%hydrogen_type == ConstraintAtomName) then
+        is_light = molecule%light_atom_name(i)
+      else if (constraints%hydrogen_type == ConstraintAtomMass) then
+        is_light = molecule%light_atom_mass(i)
+      else
+        is_light = molecule%light_atom_name(i) .or. molecule%light_atom_mass(i)
+      end if
+
+    end function is_light
+
+    subroutine set_not_light(molecule, i)
+      type(s_molecule), intent(inout) :: molecule
+      integer,          intent(in)    :: i
+
+      molecule%light_atom_name(i) = .false.
+      molecule%light_atom_mass(i) = .false.
+
+    end subroutine set_not_light
+
+  end subroutine unconstrain_fixed_hydrogen
 
   subroutine setup_solute_and_water(molecule, enefunc, water_model, &
                                     water_type, num_water)

@@ -40,6 +40,9 @@ module sp_constraints_str_mod
     integer,          allocatable :: duplicate(:)
     integer,          allocatable :: H_index(:,:)
 
+    !  fixed atoms (set before setup_domain)
+    logical,          allocatable :: fixatm(:)
+
     ! Ring
     !
     integer,          allocatable :: ring(:)
