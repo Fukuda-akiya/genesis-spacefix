@@ -237,6 +237,8 @@ contains
     if (stop_trans) then
       do i = 1, ncell
         do ix = 1, natom(i)
+          ! fixed atoms (zero mass) are not moved
+          if (mass(ix,i) <= EPS) cycle
           velocity(1:3,ix,i) = velocity(1:3,ix,i) - real(vcom(1:3),wip)
         end do
       end do
@@ -247,6 +249,7 @@ contains
     if (stop_rot) then
       do i = 1, ncell
         do ix = 1, natom(i)
+          if (mass(ix,i) <= EPS) cycle
           c(1:3) = coord(1:3,ix,i) - real(ccom(1:3),wip)
           velocity(1,ix,i) = velocity(1,ix,i) - (omega(2)*c(3) - omega(3)*c(2))
           velocity(2,ix,i) = velocity(2,ix,i) - (omega(3)*c(1) - omega(1)*c(3))

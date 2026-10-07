@@ -265,7 +265,13 @@ contains
 
     end select
 
-    ! [Step3] Set relevant variables and structures 
+    ! fixed atoms (fixatm_select_index) are supported only for REMD (gREST)
+    !
+    if (genesis_run_mode /= GenesisREMD .and. &
+        len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0) &
+      call error_msg('fixatm_select_index is supported only for REMD (gREST) runs')
+
+    ! [Step3] Set relevant variables and structures
     !
     if (main_rank) then
       write(MsgOut,'(A)') '[STEP3] Set Relevant Variables and Structures'

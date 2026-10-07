@@ -20,6 +20,10 @@ module sp_constraints_mod
   use sp_domain_str_mod
   use molecules_mod
   use molecules_str_mod
+  use string_mod
+  use select_mod
+  use select_atoms_mod
+  use select_atoms_str_mod
   use fileio_grotop_mod
   use fileio_prmtop_mod
   use fileio_par_mod
@@ -52,6 +56,7 @@ module sp_constraints_mod
     integer                  :: lincs_order     = 4
     character(5)             :: water_model     = 'TIP3'
     real(wp)                 :: hydrogen_mass_upper_bound = 2.1_wip
+    character(MaxLine)       :: fixatm_select_index = ''
   end type s_cons_info
 
   ! parameters
@@ -62,6 +67,8 @@ module sp_constraints_mod
   ! subroutines
   public  :: show_ctrl_constraints
   public  :: read_ctrl_constraints
+  public  :: setup_fixatm_spdyn
+  public  :: apply_fixatm_domain
   public  :: setup_constraints
   public  :: setup_constraints_pio
   public  :: compute_constraints
@@ -123,6 +130,7 @@ contains
         write(MsgOut,'(A)') '# shake_iteration = 500      # max number of SHAKE/RATTLE iterations'
         write(MsgOut,'(A)') '# shake_tolerance = 1.0e-8   # SHAKE/RATTLE tolerance (Ang)'
         write(MsgOut,'(A)') '# water_model     = TIP3    # water model'
+        write(MsgOut,'(A)') '# fixatm_select_index = 1   # fixed atoms (REMD only, not with rigid_bond)'
         write(MsgOut,'(A)') '# hydrogen_mass_upper_bound  = 2.1    # upper mass limit to define the hydrogen atom'
         write(MsgOut,'(A)') ' '
 
@@ -184,6 +192,8 @@ contains
                                cons_info%hydrogen_type, ConstraintAtomType)
     call read_ctrlfile_real   (handle, Section, 'hydrogen_mass_upper_bound', &
                                cons_info%hydrogen_mass_upper_bound)
+    call read_ctrlfile_string (handle, Section, 'fixatm_select_index', &
+                               cons_info%fixatm_select_index)
 
     call end_ctrlfile_section(handle)
 
@@ -192,6 +202,11 @@ contains
     ! fast_water is true if rigid_bond is true
     !
     if (cons_info%rigid_bond) cons_info%fast_water = .true.
+
+    ! fixed atoms are not supported together with SHAKE/SETTLE
+    !
+    if (cons_info%rigid_bond .and. len_trim(cons_info%fixatm_select_index) /= 0) &
+      call error_msg('Read_Ctrl_Constraints> fixatm_select_index cannot be used with rigid_bond = YES')
 
     ! write parameters to MsgOut
     !
@@ -230,13 +245,123 @@ contains
         write(MsgOut,'(A30)') '  rigid_bond      =         no'
       end if
 
+      if (len_trim(cons_info%fixatm_select_index) /= 0) then
+        write(MsgOut,'(A,A)') '  fixatm_select_index = ', &
+                              trim(cons_info%fixatm_select_index)
+      end if
+
       write(MsgOut,'(A)') ' '
 
     end if
 
-    return    
+    return
 
   end subroutine read_ctrl_constraints
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_fixatm_spdyn
+  !> @brief        select the fixed atoms given by fixatm_select_index
+  !! @param[in]    cons_info   : constraints control information
+  !! @param[in]    sel_info    : selection information
+  !! @param[in]    molecule    : molecule information
+  !! @param[out]   fixed       : fixed atom flags (global atom index)
+  !! @param[out]   num_fixatm  : number of fixed atoms
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_fixatm_spdyn(cons_info, sel_info, molecule, fixed, num_fixatm)
+
+    ! formal arguments
+    type(s_cons_info),       intent(in)    :: cons_info
+    type(s_sel_info),        intent(in)    :: sel_info
+    type(s_molecule),        intent(in)    :: molecule
+    logical,                 allocatable, intent(out) :: fixed(:)
+    integer,                 intent(out)   :: num_fixatm
+
+    ! local variables
+    integer                  :: ngroup, igroup, i, j
+    integer,     allocatable :: group_list(:)
+    type(s_selatoms)         :: selatoms
+
+
+    allocate(fixed(molecule%num_atoms))
+    fixed = .false.
+    num_fixatm = 0
+
+    ngroup = split_num(trim(cons_info%fixatm_select_index))
+    if (ngroup == 0) return
+
+    allocate(group_list(ngroup))
+    call split(ngroup, ngroup, cons_info%fixatm_select_index, group_list)
+
+    do i = 1, ngroup
+      igroup = group_list(i)
+      if (igroup < 1 .or. igroup > size(sel_info%groups)) &
+        call error_msg('Setup_Fixatm_Spdyn> group index is out of range')
+
+      call select_atom(molecule, sel_info%groups(igroup), selatoms)
+      do j = 1, size(selatoms%idx)
+        ! water is integrated with its own table masses, so it cannot be fixed
+        if (molecule%residue_name(selatoms%idx(j))(1:3) == 'TIP' .or. &
+            molecule%residue_name(selatoms%idx(j))(1:3) == 'WAT' .or. &
+            molecule%residue_name(selatoms%idx(j))(1:3) == 'MIZ' .or. &
+            molecule%residue_name(selatoms%idx(j))(1:3) == 'SOL') &
+          call error_msg('Setup_Fixatm_Spdyn> water molecules cannot be fixed')
+
+        if (.not. fixed(selatoms%idx(j))) then
+          fixed(selatoms%idx(j)) = .true.
+          num_fixatm = num_fixatm + 1
+        end if
+      end do
+      deallocate(selatoms%idx)
+    end do
+
+    deallocate(group_list)
+
+    return
+
+  end subroutine setup_fixatm_spdyn
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    apply_fixatm_domain
+  !> @brief        set zero mass and zero velocity to the fixed atoms in domain
+  !! @param[in]    fixed    : fixed atom flags (global atom index)
+  !! @param[inout] domain   : domain information
+  !
+  !  The mass is set to zero after the domain decomposition, so that the
+  !  setup of water and hydrogen groups is not affected. inv_mass is zero
+  !  for the fixed atoms, and the mass is kept zero when atoms migrate.
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine apply_fixatm_domain(fixed, domain)
+
+    ! formal arguments
+    logical,                 intent(in)    :: fixed(:)
+    type(s_domain),          intent(inout) :: domain
+
+    ! local variables
+    integer                  :: i, ix, iglobal, natom_mol
+
+
+    natom_mol = size(fixed)
+
+    do i = 1, domain%num_cell_local
+      do ix = 1, domain%num_atom(i)
+        iglobal = mod(domain%id_l2g(ix,i) - 1, natom_mol) + 1
+        if (fixed(iglobal)) then
+          domain%mass     (ix,i) = 0.0_wip
+          domain%inv_mass (ix,i) = 0.0_wip
+          domain%velocity (1:3,ix,i) = 0.0_wip
+        end if
+      end do
+    end do
+
+    return
+
+  end subroutine apply_fixatm_domain
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

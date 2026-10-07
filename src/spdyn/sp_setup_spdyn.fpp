@@ -702,12 +702,16 @@ contains
     type(s_mode)             :: mode
     type(s_localres)         :: localres
     logical                  :: use_parallel_io
+    integer                  :: num_fixatm
+    logical, allocatable     :: fixatm(:)
 
 
     ! setup parallel I/O
     !
     use_parallel_io = pio_check_ranked_file(ctrl_data%inp_info%rstfile)
     if (use_parallel_io) then
+      if (len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0) &
+        call error_msg('Setup_Spdyn_Remd> fixatm_select_index is not supported with parallel I/O')
       call setup_spdyn_remd_pio(ctrl_data, output, enefunc, pairlist,     &
                                 dynvars, dynamics, constraints, ensemble, &
                                 restraints, boundary, domain, comm, remd)
@@ -770,7 +774,16 @@ contains
     call setup_solute_tempering(ctrl_data%rep_info, &
                                 molecule, restraints, ctrl_data%cons_info)
 
-    ! set parameters for domain 
+    ! select fixed atoms (zero mass is applied after domain decomposition)
+    !
+    if (len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0 .and. &
+        present(alchemy)) &
+      call error_msg('Setup_Spdyn_Remd> fixatm_select_index is not supported with FEP')
+
+    call setup_fixatm_spdyn(ctrl_data%cons_info, ctrl_data%sel_info, &
+                            molecule, fixatm, num_fixatm)
+
+    ! set parameters for domain
     !
     if (present(alchemy)) then
       ! FEP
@@ -892,6 +905,15 @@ contains
     if (rst%rstfile_type /= RstfileTypeUndef) then
       call setup_restart_post(rst, dynamics, dynvars)
       call dealloc_rst_all(rst)
+    end if
+
+    ! fixed atoms: zero mass and velocity, and remove their degrees of freedom
+    !
+    if (num_fixatm > 0) then
+      call apply_fixatm_domain(fixatm, domain)
+      call update_num_deg_freedom('After setup of fixed atoms', &
+                                  -3*num_fixatm*domain%num_duplicate, &
+                                  molecule%num_deg_freedom)
     end if
 
     domain%num_deg_freedom = molecule%num_deg_freedom
