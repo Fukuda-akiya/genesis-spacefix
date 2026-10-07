@@ -57,6 +57,7 @@ module sp_constraints_mod
     character(5)             :: water_model     = 'TIP3'
     real(wp)                 :: hydrogen_mass_upper_bound = 2.1_wip
     character(MaxLine)       :: fixatm_select_index = ''
+    character(MaxLine)       :: fixatm_atom_index   = ''
   end type s_cons_info
 
   ! parameters
@@ -69,6 +70,7 @@ module sp_constraints_mod
   public  :: read_ctrl_constraints
   public  :: setup_fixatm_spdyn
   public  :: apply_fixatm_domain
+  public  :: fixatm_requested
   public  :: setup_constraints
   public  :: setup_constraints_pio
   public  :: compute_constraints
@@ -130,7 +132,7 @@ contains
         write(MsgOut,'(A)') '# shake_iteration = 500      # max number of SHAKE/RATTLE iterations'
         write(MsgOut,'(A)') '# shake_tolerance = 1.0e-8   # SHAKE/RATTLE tolerance (Ang)'
         write(MsgOut,'(A)') '# water_model     = TIP3    # water model'
-        write(MsgOut,'(A)') '# fixatm_select_index = 1   # fixed atoms (REMD only, not with rigid_bond)'
+        write(MsgOut,'(A)') '# fixatm_atom_index   = 1-100 200  # fixed atoms by atom number (REMD only)'
         write(MsgOut,'(A)') '# hydrogen_mass_upper_bound  = 2.1    # upper mass limit to define the hydrogen atom'
         write(MsgOut,'(A)') ' '
 
@@ -194,6 +196,8 @@ contains
                                cons_info%hydrogen_mass_upper_bound)
     call read_ctrlfile_string (handle, Section, 'fixatm_select_index', &
                                cons_info%fixatm_select_index)
+    call read_ctrlfile_string (handle, Section, 'fixatm_atom_index', &
+                               cons_info%fixatm_atom_index)
 
     call end_ctrlfile_section(handle)
 
@@ -205,8 +209,8 @@ contains
 
     ! fixed atoms are not supported together with SHAKE/SETTLE
     !
-    if (cons_info%rigid_bond .and. len_trim(cons_info%fixatm_select_index) /= 0) &
-      call error_msg('Read_Ctrl_Constraints> fixatm_select_index cannot be used with rigid_bond = YES')
+    if (cons_info%rigid_bond .and. fixatm_requested(cons_info)) &
+      call error_msg('Read_Ctrl_Constraints> fixatm_select_index / fixatm_atom_index cannot be used with rigid_bond = YES')
 
     ! write parameters to MsgOut
     !
@@ -249,6 +253,10 @@ contains
         write(MsgOut,'(A,A)') '  fixatm_select_index = ', &
                               trim(cons_info%fixatm_select_index)
       end if
+      if (len_trim(cons_info%fixatm_atom_index) /= 0) then
+        write(MsgOut,'(A,A)') '  fixatm_atom_index   = ', &
+                              trim(cons_info%fixatm_atom_index)
+      end if
 
       write(MsgOut,'(A)') ' '
 
@@ -289,11 +297,11 @@ contains
     fixed = .false.
     num_fixatm = 0
 
+    ! fixed atoms given by selection groups
+    !
     ngroup = split_num(trim(cons_info%fixatm_select_index))
-    if (ngroup == 0) return
-
-    allocate(group_list(ngroup))
-    call split(ngroup, ngroup, cons_info%fixatm_select_index, group_list)
+    allocate(group_list(max(ngroup,1)))
+    if (ngroup > 0) call split(ngroup, ngroup, cons_info%fixatm_select_index, group_list)
 
     do i = 1, ngroup
       igroup = group_list(i)
@@ -319,9 +327,113 @@ contains
 
     deallocate(group_list)
 
+    ! fixed atoms given by atom numbers
+    !
+    call fixatm_add_atom_index(cons_info%fixatm_atom_index, molecule, &
+                               fixed, num_fixatm)
+
     return
 
   end subroutine setup_fixatm_spdyn
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Function      fixatm_requested
+  !> @brief        return .true. if any fixed atom is requested in the input
+  !! @param[in]    cons_info : constraints control information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  logical function fixatm_requested(cons_info)
+
+    ! formal arguments
+    type(s_cons_info),       intent(in)    :: cons_info
+
+    fixatm_requested = len_trim(cons_info%fixatm_select_index) /= 0 .or. &
+                       len_trim(cons_info%fixatm_atom_index)   /= 0
+
+    return
+
+  end function fixatm_requested
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    fixatm_add_atom_index
+  !> @brief        add fixed atoms given by atom numbers (1-based, e.g. 1-100 200)
+  !! @param[in]    atom_index : atom numbers in the input
+  !! @param[in]    molecule   : molecule information
+  !! @param[inout] fixed      : fixed atom flags (global atom index)
+  !! @param[inout] num_fixatm : number of fixed atoms
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine fixatm_add_atom_index(atom_index, molecule, fixed, num_fixatm)
+
+    ! formal arguments
+    character(*),            intent(in)    :: atom_index
+    type(s_molecule),        intent(in)    :: molecule
+    logical,                 intent(inout) :: fixed(:)
+    integer,                 intent(inout) :: num_fixatm
+
+    ! local variables
+    integer                  :: ntoken, itoken, ipos, i, ifirst, ilast
+    integer                  :: ib, ie
+    character(MaxLine), allocatable :: tokens(:)
+
+
+    ntoken = split_num(trim(atom_index))
+    if (ntoken == 0) return
+
+    ! split the input by blanks
+    !
+    allocate(tokens(ntoken))
+    ib = 1
+    do itoken = 1, ntoken
+      do while (atom_index(ib:ib) == ' ')
+        ib = ib + 1
+      end do
+      ie = ib
+      do while (ie <= len_trim(atom_index))
+        if (atom_index(ie:ie) == ' ') exit
+        ie = ie + 1
+      end do
+      tokens(itoken) = atom_index(ib:ie-1)
+      ib = ie
+    end do
+
+    do itoken = 1, ntoken
+      ipos = index(tokens(itoken), '-')
+      if (ipos == 0) then
+        read(tokens(itoken), *) ifirst
+        ilast = ifirst
+      else
+        read(tokens(itoken)(1:ipos-1), *) ifirst
+        read(tokens(itoken)(ipos+1:),  *) ilast
+      end if
+
+      if (ifirst < 1 .or. ilast > molecule%num_atoms .or. ifirst > ilast) &
+        call error_msg('Setup_Fixatm_Spdyn> atom number in fixatm_atom_index is out of range')
+
+      do i = ifirst, ilast
+        ! water is integrated with its own table masses, so it cannot be fixed
+        if (molecule%residue_name(i)(1:3) == 'TIP' .or. &
+            molecule%residue_name(i)(1:3) == 'WAT' .or. &
+            molecule%residue_name(i)(1:3) == 'MIZ' .or. &
+            molecule%residue_name(i)(1:3) == 'SOL') &
+          call error_msg('Setup_Fixatm_Spdyn> water molecules cannot be fixed')
+
+        if (.not. fixed(i)) then
+          fixed(i) = .true.
+          num_fixatm = num_fixatm + 1
+        end if
+      end do
+    end do
+
+    deallocate(tokens)
+
+    return
+
+  end subroutine fixatm_add_atom_index
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

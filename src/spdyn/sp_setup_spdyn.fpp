@@ -710,7 +710,7 @@ contains
     !
     use_parallel_io = pio_check_ranked_file(ctrl_data%inp_info%rstfile)
     if (use_parallel_io) then
-      if (len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0) &
+      if (fixatm_requested(ctrl_data%cons_info)) &
         call error_msg('Setup_Spdyn_Remd> fixatm_select_index is not supported with parallel I/O')
       call setup_spdyn_remd_pio(ctrl_data, output, enefunc, pairlist,     &
                                 dynvars, dynamics, constraints, ensemble, &
@@ -776,7 +776,7 @@ contains
 
     ! select fixed atoms (zero mass is applied after domain decomposition)
     !
-    if (len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0 .and. &
+    if (fixatm_requested(ctrl_data%cons_info) .and. &
         present(alchemy)) &
       call error_msg('Setup_Spdyn_Remd> fixatm_select_index is not supported with FEP')
 

@@ -22,6 +22,7 @@ program spdyn
   use sp_dynamics_mod
   use sp_minimize_mod
   use sp_setup_spdyn_mod
+  use sp_constraints_mod
   use sp_control_mod
   use sp_energy_mod
   use sp_energy_pme_mod
@@ -268,7 +269,7 @@ contains
     ! fixed atoms (fixatm_select_index) are supported only for REMD (gREST)
     !
     if (genesis_run_mode /= GenesisREMD .and. &
-        len_trim(ctrl_data%cons_info%fixatm_select_index) /= 0) &
+        fixatm_requested(ctrl_data%cons_info)) &
       call error_msg('fixatm_select_index is supported only for REMD (gREST) runs')
 
     ! [Step3] Set relevant variables and structures
